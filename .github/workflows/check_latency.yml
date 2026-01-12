@@ -2,11 +2,11 @@ name: Check VLESS Latency
 
 on:
   schedule:
-    - cron: '*/2 * * * *'   # каждые 2 минуты
+    - cron: "*/2 * * * *"  # каждые 2 минуты
   workflow_dispatch:
 
 jobs:
-  latency-check:
+  check-latency:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,11 +18,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Run latency checker
+      - name: Install dependencies
         run: |
-          python3 scripts/check_latency.py
+          python -m pip install --upgrade pip
+
+      - name: Run latency check
+        run: python3 scripts/check_latency.py
 
       - name: Commit results
         env:
@@ -30,13 +33,9 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-
           git add githubmirror/26_alive_final.txt
-
           if git diff --cached --quiet; then
-            echo "No changes"
+            echo "No changes to commit"
           else
             git commit -m "Update 26_alive_final.txt"
-            git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
-          fi
-
+            git push https://x-access-token:${GH_PAT}@github.com/${{ github.repository }} HEAD:main
