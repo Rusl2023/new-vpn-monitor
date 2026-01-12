@@ -2,7 +2,7 @@ name: Filter VLESS Servers
 
 on:
   schedule:
-    - cron: '0 * * * *'  # каждый час
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,20 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------
-      # Шаг 1: Checkout без встроенного токена
-      # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      # -----------------------------
-      # Шаг 2: Фильтруем VLESS
-      # -----------------------------
       - name: Filter VLESS servers from 26.txt
         run: |
-          python3 - <<END_PYTHON
+          python3 <<'PYTHON_SCRIPT'
 import requests
 import os
 
@@ -46,11 +40,8 @@ with open(OUTPUT_FILE, "w") as f:
         f.write(link + "\n")
 
 print(f"Saved to {OUTPUT_FILE}")
-END_PYTHON
+PYTHON_SCRIPT
 
-      # -----------------------------
-      # Шаг 3: Commit и push через GH_PAT
-      # -----------------------------
       - name: Commit filtered servers
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -61,7 +52,7 @@ END_PYTHON
           git add githubmirror/26_alive_filtered.txt
 
           if git diff --cached --quiet; then
-              echo "No changes to commit"
+            echo "No changes to commit"
           else
-              git commit -m "Update 26_alive_filtered.txt"
-              git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
+            git commit -m "Update 26_alive_filtered.txt"
+            git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
