@@ -2,7 +2,7 @@ name: Filter VLESS Servers
 
 on:
   schedule:
-    - cron: '0 * * * *'  # каждый час
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,24 +10,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -----------------------------
+      # Checkout repository
+      # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false  # отключаем встроенного бота
+          persist-credentials: false
 
+      # -----------------------------
+      # Setup Python
+      # -----------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      # -----------------------------
+      # Install dependencies
+      # -----------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Filter VLESS servers from 26.txt
+      # -----------------------------
+      # Create filter script
+      # -----------------------------
+      - name: Create Python filter script
         run: |
-          python3 - <<'PYTHON_CODE'
+          cat > filter_vless.py << 'EOF'
 import requests
 import os
 
@@ -50,8 +62,17 @@ with open(OUTPUT_FILE, "w") as f:
         f.write(link + "\n")
 
 print(f"Saved to {OUTPUT_FILE}")
-PYTHON_CODE
+EOF
 
+      # -----------------------------
+      # Run Python filter script
+      # -----------------------------
+      - name: Run Python filter script
+        run: python3 filter_vless.py
+
+      # -----------------------------
+      # Commit and push changes
+      # -----------------------------
       - name: Commit filtered servers
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
