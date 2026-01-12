@@ -1,50 +1,89 @@
+#!/usr/bin/env python3
 import asyncio
+import ssl
+import socket
+from urllib.parse import urlparse, parse_qs
 import aiohttp
 import time
-from urllib.parse import urlparse, parse_qs
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
-MAX_LATENCY = 600  # ms
-TIMEOUT = 5        # секунд на один сервер
+MAX_LATENCY = 0.6  # 600ms
+TIMEOUT = 5
 
-results = []
+# Парсинг VLESS URL
+def parse_vless(url):
+    url = url.strip()
+    if not url.startswith("vless://"):
+        return None
+    url = url[7:]
+    user_host, *rest = url.split("@")
+    host_port, *params = rest[0].split("?")
+    host, port = host_port.split(":")
+    query = {}
+    if params:
+        query = parse_qs(params[0])
+    return {
+        "url": url,
+        "host": host,
+        "port": int(port),
+        "params": query,
+    }
 
-async def check_vless(link):
+# Проверка TCP + TLS
+async def check_server(server):
+    host = server["host"]
+    port = server["port"]
+    params = server["params"]
+    start = time.time()
+    tls_latency = 0
     try:
-        parsed = urlparse(link)
-        host = parsed.hostname
-        port = parsed.port
-        query = parse_qs(parsed.query)
-        path = query.get("path", ["/"])[0]
-        sni = query.get("sni", [host])[0]
-
-        start = time.time()
-        # TLS handshake + TCP ping approximation
-        ssl_context = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(connector=ssl_context) as session:
-            async with session.head(f"https://{host}:{port}{path}", timeout=TIMEOUT) as resp:
-                latency = (time.time() - start) * 1000
-                if latency <= MAX_LATENCY:
-                    results.append((latency, link))
+        # TCP connect
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), TIMEOUT)
+        # TLS handshake (если нужно)
+        if params.get("security", ["none"])[0] in ["tls", "reality"]:
+            ctx = ssl.create_default_context()
+            ssl_start = time.time()
+            reader_ssl, writer_ssl = await asyncio.wait_for(
+                asyncio.open_connection(host, port, ssl=ctx), TIMEOUT
+            )
+            tls_latency = time.time() - ssl_start
+            writer_ssl.close()
+            await writer_ssl.wait_closed()
+        writer.close()
+        await writer.wait_closed()
+        latency = time.time() - start
     except Exception:
-        pass
+        return None
+
+    # Минимальный WS HEAD проверка
+    ws_path = params.get("path", ["/"])[0]
+    scheme = "https" if params.get("security", ["none"])[0] in ["tls", "reality"] else "http"
+    url = f"{scheme}://{host}:{port}{ws_path}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, timeout=TIMEOUT):
+                pass
+    except Exception:
+        pass  # не критично
+
+    if latency > MAX_LATENCY:
+        return None
+    return {"url": server["url"], "latency": latency, "tls_latency": tls_latency}
 
 async def main():
-    links = []
-    with open(INPUT_FILE, "r") as f:
+    servers = []
+    with open(INPUT_FILE) as f:
         for line in f:
-            line = line.strip()
-            if line.startswith("vless://"):
-                links.append(line)
-
-    tasks = [check_vless(link) for link in links]
-    await asyncio.gather(*tasks)
-
-    results.sort(key=lambda x: x[0])
+            parsed = parse_vless(line)
+            if parsed:
+                servers.append(parsed)
+    results = await asyncio.gather(*[check_server(s) for s in servers])
+    alive = [r for r in results if r]
+    alive.sort(key=lambda x: x["latency"])
     with open(OUTPUT_FILE, "w") as f:
-        for latency, link in results:
-            f.write(f"{link} # latency={int(latency)}ms\n")
+        for s in alive:
+            f.write(f"{s['url']} # latency={int(s['latency']*1000)}ms tls={int(s['tls_latency']*1000)}ms\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
