@@ -2,7 +2,7 @@ name: Filter VLESS Servers
 
 on:
   schedule:
-    - cron: '0 * * * *'   # каждый час, можно изменить при необходимости
+    - cron: '0 * * * *'  # каждый час
   workflow_dispatch:
 
 jobs:
@@ -10,9 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -----------------------------
+      # Шаг 1: checkout без встроенного токена
+      # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # ⚠️ отключаем токен по умолчанию
 
+      # -----------------------------
+      # Шаг 2: фильтруем VLESS
+      # -----------------------------
       - name: Filter VLESS servers from 26.txt
         run: |
           python - <<'EOF'
@@ -29,7 +37,6 @@ jobs:
           r.raise_for_status()
           lines = r.text.splitlines()
 
-          # Фильтруем только VLESS-ссылки
           vless_links = [l.strip() for l in lines if l.strip().startswith("vless://")]
 
           print(f"Found {len(vless_links)} VLESS links")
@@ -41,19 +48,21 @@ jobs:
           print(f"Saved to {OUTPUT_FILE}")
           EOF
 
+      # -----------------------------
+      # Шаг 3: Commit и push через GH_PAT
+      # -----------------------------
       - name: Commit filtered servers
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          # Настройка git
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          
+
           git add githubmirror/26_alive_filtered.txt
-          
-          # Проверяем, есть ли изменения перед коммитом
+
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update 26_alive_filtered.txt"
-            # Пуш через GH_PAT
-            git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
-          fi
+            # Пуш через персональный токен
+            git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
