@@ -1,141 +1,130 @@
-#!/usr/bin/env python3
 import subprocess
-import tempfile
 import time
 import json
-import base64
-import urllib.parse
-from pathlib import Path
+import os
+import tempfile
+from urllib.parse import urlparse, parse_qs
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
-XRAY_BIN = "./xray"
 
-TIMEOUT = 8
+XRAY_BIN = "./xray"
+TIMEOUT = 5
+TOP_LIMIT = 50
 
 
 def parse_vless(link: str):
-    assert link.startswith("vless://")
-    link = link[len("vless://"):]
+    try:
+        u = urlparse(link)
 
-    user, rest = link.split("@", 1)
-    hostport, _, params = rest.partition("?")
-    host, port = hostport.split(":")
+        host = u.hostname
+        if not host:
+            return None
 
-    query = urllib.parse.parse_qs(params)
+        # порт может быть "80/" → чистим
+        port_raw = u.netloc.split(":")[-1]
+        port = int(port_raw.split("/")[0])
 
-    def q(name, default=None):
-        return query.get(name, [default])[0]
+        uuid = u.username
+        if not uuid:
+            return None
 
-    return {
-        "id": user,
-        "host": host,
-        "port": int(port),
-        "type": q("type", "tcp"),
-        "security": q("security"),
-        "sni": q("sni"),
-        "fp": q("fp"),
-        "flow": q("flow"),
-        "pbk": q("pbk"),
-        "sid": q("sid"),
-        "spx": q("spx"),
-        "alpn": q("alpn"),
-        "mux": q("mux"),
-    }
+        params = parse_qs(u.query)
 
-
-def make_config(v):
-    stream = {
-        "network": v["type"] or "tcp",
-    }
-
-    if v["security"] == "reality":
-        stream["security"] = "reality"
-        stream["realitySettings"] = {
-            "serverName": v["sni"],
-            "publicKey": v["pbk"],
-            "shortId": v["sid"],
-            "fingerprint": v["fp"] or "chrome",
-            "spiderX": v["spx"] or "/",
+        return {
+            "uuid": uuid,
+            "host": host,
+            "port": port,
+            "params": params,
         }
-    elif v["security"] == "tls":
-        stream["security"] = "tls"
-        stream["tlsSettings"] = {
-            "serverName": v["sni"],
-            "allowInsecure": True,
-            "fingerprint": v["fp"] or "chrome",
-            "alpn": v["alpn"].split(",") if v["alpn"] else None,
-        }
+    except Exception:
+        return None
 
-    outbound = {
-        "protocol": "vless",
-        "settings": {
-            "vnext": [{
-                "address": v["host"],
-                "port": v["port"],
-                "users": [{
-                    "id": v["id"],
-                    "encryption": "none",
-                    "flow": v["flow"],
-                }]
-            }]
-        },
-        "streamSettings": stream,
-    }
 
-    if v["mux"] == "1":
-        outbound["mux"] = {"enabled": True}
-
+def build_config(v):
     return {
         "log": {"loglevel": "none"},
         "inbounds": [{
-            "port": 10808,
+            "port": 1080,
             "listen": "127.0.0.1",
             "protocol": "socks",
+            "settings": {"udp": False}
         }],
-        "outbounds": [
-            outbound,
-            {"protocol": "freedom", "tag": "direct"}
-        ]
+        "outbounds": [{
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": v["host"],
+                    "port": v["port"],
+                    "users": [{
+                        "id": v["uuid"],
+                        "encryption": "none"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": v["params"].get("type", ["tcp"])[0],
+                "security": v["params"].get("security", ["none"])[0],
+                "tlsSettings": {
+                    "serverName": v["params"].get("sni", [""])[0]
+                }
+            }
+        }]
     }
 
 
-def check(link):
+def check(link: str):
     v = parse_vless(link)
-    cfg = make_config(v)
+    if not v:
+        return None
+
+    cfg = build_config(v)
 
     with tempfile.NamedTemporaryFile("w", delete=False) as f:
         json.dump(cfg, f)
         cfg_path = f.name
 
     start = time.time()
+
     try:
-        subprocess.run(
-            [XRAY_BIN, "run", "-test", "-config", cfg_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        p = subprocess.run(
+            [XRAY_BIN, "run", "-c", cfg_path],
             timeout=TIMEOUT,
-            check=True
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
+    except subprocess.TimeoutExpired:
         return round((time.time() - start) * 1000)
-    except Exception:
-        return None
-    finally:
-        Path(cfg_path).unlink(missing_ok=True)
+
+    return None
 
 
 def main():
-    out = []
-    for line in Path(INPUT_FILE).read_text().splitlines():
-        latency = check(line.strip())
-        if latency is not None:
-            out.append((latency, line))
+    if not os.path.exists(INPUT_FILE):
+        print("Input file not found")
+        return
 
-    out.sort(key=lambda x: x[0])
+    with open(INPUT_FILE) as f:
+        links = [l.strip() for l in f if l.strip().startswith("vless://")]
+
+    results = []
+
+    for link in links:
+        latency = check(link)
+        if latency:
+            results.append((latency, link))
+            print(f"OK {latency} ms")
+
+    results.sort(key=lambda x: x[0])
+    results = results[:TOP_LIMIT]
+
+    os.makedirs("githubmirror", exist_ok=True)
 
     with open(OUTPUT_FILE, "w") as f:
-        for lat, link in out:
-            f.write(f"# {lat} ms\n{link}\n")
+        for latency, link in results:
+            f.write(link + "\n")
+
+    print(f"Saved {len(results)} servers → {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
