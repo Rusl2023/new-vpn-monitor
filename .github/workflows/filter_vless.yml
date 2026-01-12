@@ -45,3 +45,4 @@ jobs:
           else
               git commit -m "Update 26_alive_filtered.txt"
               git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
+          fi
