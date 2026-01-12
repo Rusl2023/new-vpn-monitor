@@ -43,8 +43,17 @@ jobs:
 
       - name: Commit filtered servers
         run: |
+          # Настройка git
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+          
+          # Добавляем файл
           git add githubmirror/26_alive_filtered.txt
-          git diff --cached --quiet || git commit -m "Update 26_alive_filtered.txt"
-          git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }} HEAD:main
+          
+          # Проверяем есть ли изменения перед коммитом
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update 26_alive_filtered.txt"
+            git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }} HEAD:main
+          fi
