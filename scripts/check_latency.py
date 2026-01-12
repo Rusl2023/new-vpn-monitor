@@ -1,68 +1,77 @@
 import socket
 import ssl
 import time
-from urllib.parse import urlparse, parse_qs
+import concurrent.futures
+import os
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
-MAX_LATENCY = 0.6  # 600ms
+MAX_LATENCY_MS = 600  # отсекаем >600ms
+MAX_WORKERS = 50      # количество потоков
+TIMEOUT = 1           # тайм-аут на соединение в секундах
+
+os.makedirs("githubmirror", exist_ok=True)
 
 def parse_vless(link):
-    """Разбирает ссылку VLESS и возвращает host, port, path, tls"""
+    """
+    Простой парсер VLESS-ссылки.
+    """
     try:
-        url = urlparse(link)
-        host = url.hostname
-        port = url.port
-        query = parse_qs(url.query)
-        path = query.get("path", ["/"])[0]
-        tls = "tls" in query or query.get("security", ["none"])[0].lower() == "tls"
-        return host, port, path, tls
-    except Exception as e:
-        print(f"Parse error: {link} -> {e}")
-        return None, None, None, None
-
-def check_latency(host, port, use_tls):
-    """Измеряет TCP latency и TLS handshake latency"""
-    tcp_latency = None
-    tls_latency = 0
-    try:
-        start = time.time()
-        sock = socket.create_connection((host, port), timeout=3)
-        tcp_latency = time.time() - start
-        if use_tls:
-            context = ssl.create_default_context()
-            start_tls = time.time()
-            wrapped = context.wrap_socket(sock, server_hostname=host)
-            tls_latency = time.time() - start_tls
-            wrapped.close()
-        else:
-            sock.close()
-    except Exception as e:
+        main = link.split("@")[1]
+        host_port = main.split("?")[0]
+        host, port = host_port.split(":")
+        return host, int(port)
+    except Exception:
         return None, None
-    return tcp_latency, tls_latency
+
+def check_latency(link):
+    host, port = parse_vless(link)
+    if not host or not port:
+        return None
+
+    start = time.time()
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=TIMEOUT) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as ssock:
+                tls_start = time.time()
+                # simple handshake test
+                ssock.do_handshake()
+                tls_end = time.time()
+    except Exception:
+        return None
+
+    total_latency = (time.time() - start) * 1000  # ms
+    tls_latency = (tls_end - tls_start) * 1000 if 'tls_end' in locals() else None
+
+    if total_latency > MAX_LATENCY_MS:
+        return None
+
+    return f"{link}  # latency={total_latency:.0f}ms tls={tls_latency:.0f}ms"
 
 def main():
-    alive = []
-    with open(INPUT_FILE) as f:
-        lines = f.read().splitlines()
+    if not os.path.exists(INPUT_FILE):
+        print(f"{INPUT_FILE} не найден")
+        return
 
-    for line in lines:
-        host, port, path, tls = parse_vless(line.strip())
-        if not host or not port:
-            continue
-        tcp, tlat = check_latency(host, port, tls)
-        if tcp is None:
-            continue
-        total_latency = tcp + (tlat if tlat else 0)
-        if total_latency <= MAX_LATENCY:
-            alive.append((line.strip(), total_latency))
+    with open(INPUT_FILE, "r") as f:
+        links = [l.strip() for l in f if l.strip().startswith("vless://")]
 
-    alive.sort(key=lambda x: x[1])
-    print(f"Saved {len(alive)} servers → {OUTPUT_FILE}")
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(check_latency, link) for link in links]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                results.append(res)
+
+    results.sort(key=lambda x: float(x.split("latency=")[1].split("ms")[0]))  # сортировка по latency
 
     with open(OUTPUT_FILE, "w") as f:
-        for line, lat in alive:
+        for line in results:
             f.write(line + "\n")
+
+    print(f"Saved {len(results)} servers → {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
