@@ -16,14 +16,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false  # ⚠️ отключаем токен по умолчанию
+          persist-credentials: false
 
       # -----------------------------
       # Шаг 2: Фильтруем VLESS
       # -----------------------------
       - name: Filter VLESS servers from 26.txt
         run: |
-          python - <<'END_PYTHON'
+          python3 - <<END_PYTHON
 import requests
 import os
 
