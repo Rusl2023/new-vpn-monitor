@@ -3,39 +3,31 @@ import time
 import json
 import os
 import tempfile
+import socket
 from urllib.parse import urlparse, parse_qs
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
 
 XRAY_BIN = "./xray"
-TIMEOUT = 5
+SOCKS_PORT = 1080
+TIMEOUT = 6
 TOP_LIMIT = 50
 
 
 def parse_vless(link: str):
     try:
         u = urlparse(link)
-
-        host = u.hostname
-        if not host:
+        if not u.hostname or not u.username:
             return None
 
-        # порт может быть "80/" → чистим
-        port_raw = u.netloc.split(":")[-1]
-        port = int(port_raw.split("/")[0])
-
-        uuid = u.username
-        if not uuid:
-            return None
-
-        params = parse_qs(u.query)
+        port = int(u.netloc.split(":")[-1].split("/")[0])
 
         return {
-            "uuid": uuid,
-            "host": host,
+            "uuid": u.username,
+            "host": u.hostname,
             "port": port,
-            "params": params,
+            "params": parse_qs(u.query),
         }
     except Exception:
         return None
@@ -45,8 +37,8 @@ def build_config(v):
     return {
         "log": {"loglevel": "none"},
         "inbounds": [{
-            "port": 1080,
             "listen": "127.0.0.1",
+            "port": SOCKS_PORT,
             "protocol": "socks",
             "settings": {"udp": False}
         }],
@@ -73,7 +65,19 @@ def build_config(v):
     }
 
 
-def check(link: str):
+def test_socks_connect():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(TIMEOUT)
+    start = time.time()
+    try:
+        s.connect(("127.0.0.1", SOCKS_PORT))
+        s.close()
+        return int((time.time() - start) * 1000)
+    except Exception:
+        return None
+
+
+def check(link):
     v = parse_vless(link)
     if not v:
         return None
@@ -84,19 +88,22 @@ def check(link: str):
         json.dump(cfg, f)
         cfg_path = f.name
 
-    start = time.time()
-
     try:
-        p = subprocess.run(
+        proc = subprocess.Popen(
             [XRAY_BIN, "run", "-c", cfg_path],
-            timeout=TIMEOUT,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-    except subprocess.TimeoutExpired:
-        return round((time.time() - start) * 1000)
 
-    return None
+        time.sleep(1.2)  # даём Xray подняться
+        latency = test_socks_connect()
+
+        proc.terminate()
+        proc.wait(timeout=2)
+
+        return latency
+    except Exception:
+        return None
 
 
 def main():
@@ -105,23 +112,25 @@ def main():
         return
 
     with open(INPUT_FILE) as f:
-        links = [l.strip() for l in f if l.strip().startswith("vless://")]
+        links = [l.strip() for l in f if l.startswith("vless://")]
 
     results = []
 
-    for link in links:
+    for i, link in enumerate(links, 1):
         latency = check(link)
         if latency:
+            print(f"[OK] {latency} ms")
             results.append((latency, link))
-            print(f"OK {latency} ms")
+
+        if i % 50 == 0:
+            print(f"Checked {i}/{len(links)}")
 
     results.sort(key=lambda x: x[0])
     results = results[:TOP_LIMIT]
 
     os.makedirs("githubmirror", exist_ok=True)
-
     with open(OUTPUT_FILE, "w") as f:
-        for latency, link in results:
+        for _, link in results:
             f.write(link + "\n")
 
     print(f"Saved {len(results)} servers → {OUTPUT_FILE}")
