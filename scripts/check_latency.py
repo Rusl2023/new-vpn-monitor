@@ -2,8 +2,6 @@
 import asyncio
 import ssl
 import time
-from urllib.parse import urlparse
-import aiohttp
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
@@ -23,27 +21,26 @@ def parse_vless(url: str):
     except Exception:
         return None
 
-async def check_latency(server):
+async def check_tcp_tls(server):
     host = server["host"]
     port = server["port"]
 
-    # TCP + TLS handshake
     start = time.time()
     try:
         ssl_context = ssl.create_default_context()
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port, ssl=ssl_context), TIMEOUT
         )
-        tls_latency = time.time() - start
+        latency = time.time() - start
         writer.close()
         await writer.wait_closed()
     except Exception:
         return None
 
-    if tls_latency > MAX_LATENCY:
+    if latency > MAX_LATENCY:
         return None
 
-    return {"url": server["url"], "latency": round(tls_latency*1000)}
+    return {"url": server["url"], "latency": round(latency*1000)}
 
 async def main():
     servers = []
@@ -53,12 +50,10 @@ async def main():
             if srv:
                 servers.append(srv)
 
-    tasks = [check_latency(s) for s in servers]
+    tasks = [check_tcp_tls(s) for s in servers]
     results = await asyncio.gather(*tasks)
 
-    # фильтруем None
     alive = [r for r in results if r]
-    # сортируем по latency
     alive.sort(key=lambda x: x["latency"])
 
     with open(OUTPUT_FILE, "w") as f:
