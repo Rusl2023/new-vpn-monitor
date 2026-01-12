@@ -2,7 +2,7 @@ name: Filter VLESS Servers
 
 on:
   schedule:
-    - cron: '0 * * * *'   # каждый час (можно поменять по необходимости)
+    - cron: '0 * * * *'   # каждый час, можно изменить при необходимости
   workflow_dispatch:
 
 jobs:
@@ -47,13 +47,13 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           
-          # Добавляем файл
           git add githubmirror/26_alive_filtered.txt
           
-          # Проверяем есть ли изменения перед коммитом
+          # Проверяем, есть ли изменения перед коммитом
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update 26_alive_filtered.txt"
-            git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }} HEAD:main
+            # Пуш через GH_PAT
+            git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
           fi
