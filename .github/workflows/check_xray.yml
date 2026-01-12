@@ -10,18 +10,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -----------------------------
       # 1. Checkout repository
+      # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Pull Docker image
+      # -----------------------------
+      # 2. Install Docker
+      # -----------------------------
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v2
+
+      # -----------------------------
+      # 3. Проверка наличия входного файла
+      # -----------------------------
+      - name: List githubmirror contents
+        run: |
+          echo "Listing githubmirror contents:"
+          ls -la githubmirror
+          if [ ! -f githubmirror/26_alive_filtered.txt ]; then
+            echo "ERROR: 26_alive_filtered.txt not found!"
+            exit 1
+          fi
+
+      # -----------------------------
+      # 4. Pull Docker image
+      # -----------------------------
       - name: Pull Xray Checker Docker image
         run: docker pull kutovoys/xray-checker:latest
 
-      # 3. Run Xray Checker
+      # -----------------------------
+      # 5. Run Xray Checker
+      # -----------------------------
       - name: Run Xray Checker
         run: |
-          mkdir -p githubmirror/output
           echo "Running Xray Checker..."
           docker run --rm \
             -v "${GITHUB_WORKSPACE}/githubmirror:/app/input_output" \
@@ -33,7 +56,9 @@ jobs:
             --ping \
             --sort ping
 
-      # 4. Commit and push final alive servers
+      # -----------------------------
+      # 6. Commit and push final alive servers
+      # -----------------------------
       - name: Commit 26_alive_final.txt
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
