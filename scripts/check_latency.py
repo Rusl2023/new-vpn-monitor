@@ -1,75 +1,126 @@
 import socket
 import ssl
 import time
-import concurrent.futures
-import os
+import re
+from urllib.parse import urlparse, parse_qs
 
 INPUT_FILE = "githubmirror/26_alive_filtered.txt"
 OUTPUT_FILE = "githubmirror/26_alive_final.txt"
-MAX_LATENCY_MS = 600  # отсекаем >600ms
-MAX_WORKERS = 50      # количество потоков
-TIMEOUT = 1           # тайм-аут на соединение в секундах
+MAX_LATENCY = 600  # ms
 
-os.makedirs("githubmirror", exist_ok=True)
-
-def parse_vless(link):
+def parse_vless(link: str):
     """
-    Простой парсер VLESS-ссылки.
+    Разбирает ссылку vless://
     """
-    try:
-        main = link.split("@")[1]
-        host_port = main.split("?")[0]
-        host, port = host_port.split(":")
-        return host, int(port)
-    except Exception:
-        return None, None
-
-def check_latency(link):
-    host, port = parse_vless(link)
-    if not host or not port:
+    pattern = r"vless://([^@]+)@([^:]+):(\d+)\?(.+)"
+    match = re.match(pattern, link)
+    if not match:
         return None
+    uuid, host, port, query = match.groups()
+    params = parse_qs(query)
+    return {
+        "uuid": uuid,
+        "host": host,
+        "port": int(port),
+        "params": params,
+        "raw": link
+    }
 
+def tcp_ping(host, port, timeout=5):
     start = time.time()
     try:
-        context = ssl.create_default_context()
-        with socket.create_connection((host, port), timeout=TIMEOUT) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                tls_start = time.time()
-                # simple handshake test
-                ssock.do_handshake()
-                tls_end = time.time()
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return int((time.time() - start) * 1000)
     except Exception:
         return None
 
-    total_latency = (time.time() - start) * 1000  # ms
-    tls_latency = (tls_end - tls_start) * 1000 if 'tls_end' in locals() else None
-
-    if total_latency > MAX_LATENCY_MS:
+def tls_handshake(host, port, timeout=5):
+    start = time.time()
+    context = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with context.wrap_socket(sock, server_hostname=host):
+                pass
+        return int((time.time() - start) * 1000)
+    except Exception:
         return None
 
-    return f"{link}  # latency={total_latency:.0f}ms tls={tls_latency:.0f}ms"
+def ws_head(host, port, path="/", use_tls=False, timeout=5):
+    import http.client
+    try:
+        if use_tls:
+            conn = http.client.HTTPSConnection(host, port=port, timeout=timeout)
+        else:
+            conn = http.client.HTTPConnection(host, port=port, timeout=timeout)
+        conn.request("HEAD", path)
+        res = conn.getresponse()
+        conn.close()
+        return res.status < 400
+    except Exception:
+        return False
+
+def check_server(server):
+    host = server["host"]
+    port = server["port"]
+    params = server["params"]
+
+    # Определяем, нужен ли TLS
+    use_tls = False
+    if "security" in params:
+        sec = params.get("security", ["none"])[0].lower()
+        if sec in ["tls", "reality"]:
+            use_tls = True
+
+    # Определяем путь для WS
+    path = "/"
+    if "path" in params:
+        path = params["path"][0]
+
+    tcp_latency = tcp_ping(host, port)
+    if tcp_latency is None:
+        return None
+
+    tls_latency = None
+    if use_tls:
+        tls_latency = tls_handshake(host, port)
+        if tls_latency is None:
+            return None
+
+    ws_ok = True
+    if "type" in params and params["type"][0].lower() == "ws":
+        ws_ok = ws_head(host, port, path=path, use_tls=use_tls)
+        if not ws_ok:
+            return None
+
+    latency = tls_latency if tls_latency else tcp_latency
+    if latency > MAX_LATENCY:
+        return None
+
+    server["latency"] = latency
+    server["tls_latency"] = tls_latency or 0
+    return server
 
 def main():
-    if not os.path.exists(INPUT_FILE):
-        print(f"{INPUT_FILE} не найден")
-        return
-
-    with open(INPUT_FILE, "r") as f:
-        links = [l.strip() for l in f if l.strip().startswith("vless://")]
+    with open(INPUT_FILE) as f:
+        lines = f.read().splitlines()
 
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(check_latency, link) for link in links]
-        for future in concurrent.futures.as_completed(futures):
-            res = future.result()
-            if res:
-                results.append(res)
+    for line in lines:
+        parsed = parse_vless(line.strip())
+        if not parsed:
+            continue
+        checked = check_server(parsed)
+        if checked:
+            results.append(checked)
 
-    results.sort(key=lambda x: float(x.split("latency=")[1].split("ms")[0]))  # сортировка по latency
+    # сортируем по latency
+    results.sort(key=lambda x: x["latency"])
 
+    # сохраняем
     with open(OUTPUT_FILE, "w") as f:
-        for line in results:
-            f.write(line + "\n")
+        for s in results:
+            f.write(s["raw"] + "\n")
 
     print(f"Saved {len(results)} servers → {OUTPUT_FILE}")
 
