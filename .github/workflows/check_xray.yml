@@ -8,31 +8,21 @@ on:
 jobs:
   check-xray:
     runs-on: ubuntu-latest
+
     steps:
-      # -----------------------------
       # 1. Checkout repository
-      # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # -----------------------------
-      # 2. Set up Docker
-      # -----------------------------
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v2
-
-      # -----------------------------
-      # 3. Pull Xray Checker Docker image
-      # -----------------------------
-      - name: Pull Xray Checker
+      # 2. Pull Docker image
+      - name: Pull Xray Checker Docker image
         run: docker pull kutovoys/xray-checker:latest
 
-      # -----------------------------
-      # 4. Run Xray Checker against filtered servers
-      # -----------------------------
+      # 3. Run Xray Checker
       - name: Run Xray Checker
         run: |
           mkdir -p githubmirror/output
+          echo "Starting Xray Checker..."
           docker run --rm \
             -v "${GITHUB_WORKSPACE}/githubmirror:/app/input_output" \
             kutovoys/xray-checker:latest \
@@ -42,9 +32,7 @@ jobs:
             --concurrent 50 \
             --ping
 
-      # -----------------------------
-      # 5. Commit and push final alive servers
-      # -----------------------------
+      # 4. Commit and push final alive servers
       - name: Commit 26_alive_final.txt
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
