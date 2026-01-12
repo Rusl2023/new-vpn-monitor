@@ -22,7 +22,7 @@ jobs:
       - name: Run Xray Checker
         run: |
           mkdir -p githubmirror/output
-          echo "Starting Xray Checker..."
+          echo "Running Xray Checker..."
           docker run --rm \
             -v "${GITHUB_WORKSPACE}/githubmirror:/app/input_output" \
             kutovoys/xray-checker:latest \
@@ -30,7 +30,8 @@ jobs:
             --output /app/input_output/26_alive_final.txt \
             --timeout 1000 \
             --concurrent 50 \
-            --ping
+            --ping \
+            --sort ping
 
       # 4. Commit and push final alive servers
       - name: Commit 26_alive_final.txt
