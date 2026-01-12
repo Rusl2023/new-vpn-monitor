@@ -2,7 +2,7 @@ name: Filter VLESS Servers
 
 on:
   schedule:
-    - cron: '0 * * * *'   # каждый час
+    - cron: '0 * * * *'  # каждый час
   workflow_dispatch:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false   # ⚠️ чтобы пушить через GH_PAT
+          persist-credentials: false  # отключаем встроенного бота
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,7 +27,7 @@ jobs:
 
       - name: Filter VLESS servers from 26.txt
         run: |
-          python - <<'EOF'
+          python3 - <<'PYTHON_CODE'
 import requests
 import os
 
@@ -50,7 +50,7 @@ with open(OUTPUT_FILE, "w") as f:
         f.write(link + "\n")
 
 print(f"Saved to {OUTPUT_FILE}")
-EOF
+PYTHON_CODE
 
       - name: Commit filtered servers
         env:
@@ -58,11 +58,11 @@ EOF
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          
+
           git add githubmirror/26_alive_filtered.txt
-          
+
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+              echo "No changes to commit"
           else
-            git commit -m "Update 26_alive_filtered.txt"
-            git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
+              git commit -m "Update 26_alive_filtered.txt"
+              git push https://x-access-token:${GH_PAT}@github.com/Rusl2023/new-vpn-monitor.git HEAD:main
